@@ -12,10 +12,11 @@ import re
 from bs4 import BeautifulSoup
 from pynput import keyboard
 
-from chat_history_manager import ChatHistoryManager
+from memory_manager import MemoryManager
+
 #test
 # --- Settings ---
-SERPER_API_KEY = "7dff68a61a60c8740b5383e52302972444cfd14"
+SERPER_API_KEY = "7deff68a61a60c8740b5383e52302972444cfd14"
 GPT_MODEL = "gpt-4o"
 WAKE_WORDS = ["สวัสดี", "hey ai"]
 STOP_WORDS = ["หยุดพูด", "stop"]
@@ -24,17 +25,19 @@ IDLE_TIMEOUT = 60  # sec
 
 class AssistantManager:
     def __init__(self):
-        self.history_manager = ChatHistoryManager()
+        self.should_exit = False
         self.conversation_active = False
         self.last_interaction_time = time.time()
         self.wake_word_detected = threading.Event()
-
         self.current_audio_file = None
         self.current_sound_thread = None
         self.current_sound_channel = None
+        self.is_sound_playing = False
 
         pygame.mixer.init()
-        threading.Thread(target=self.wake_word_listener, daemon=True).start()
+
+        #🔥 Start real-time command listener
+        threading.Thread(target=self.command_listener, daemon=True).start()
 
     def clean_text_for_gtts(self,text):
         # 1. รักษาจุด (.) ระหว่างตัวเลข เช่น 2.14
@@ -69,21 +72,30 @@ class AssistantManager:
     # === Audio ===
     def play_audio(self, filename):
         try:
+            self.is_sound_playing = True
             sound = pygame.mixer.Sound(filename)
-            self.current_sound_channel = sound.play()
-            while self.current_sound_channel.get_busy():
-                pygame.time.wait(100)
-                self.last_interaction_time = time.time()  #when sound is playing, keep interaction time updated
+            self.current_sound_channel = sound.play()                       
+
+            # ✅ สร้าง thread คอย monitor การเล่น
+            def monitor_playback():
+                while self.current_sound_channel.get_busy():
+                    pygame.time.wait(100)  # รอทุก 100 ms
+                # เมื่อเสียงเล่นจบเอง
+                print("🎵 Sound playback finished.")
+                self.is_sound_playing = False
+
+            threading.Thread(target=monitor_playback, daemon=True).start()
 
         except Exception as e:
             print(f"❌ Error playing sound: {e}")
+
         finally:
             if os.path.exists(filename):
                 try:
                     os.remove(filename)
                 except:
                     pass
-
+    
     def speak(self, text):
         try:
             filename = f"temp_{uuid.uuid4()}.mp3"
@@ -91,9 +103,7 @@ class AssistantManager:
             cleaned_text = self.clean_text_for_gtts(text)
 
             tts = gTTS(text=cleaned_text, lang="th")
-            tts.save(filename)
-
-            self.stop_audio()
+            tts.save(filename)           
 
             self.current_audio_file = filename
             self.current_sound_thread = threading.Thread(target=self.play_audio, args=(filename,))
@@ -103,15 +113,21 @@ class AssistantManager:
 
     def stop_audio(self):
         if self.current_sound_channel and self.current_sound_channel.get_busy():
+            print("🛑 Stopping audio...")
             self.current_sound_channel.stop()
+
         if self.current_sound_thread and self.current_sound_thread.is_alive():
-            self.current_sound_thread.join()
+            print("🧹 Cleaning audio thread...")
+            self.current_sound_thread.join(timeout=1)  # ไม่ต้องรอ join นาน
+
         if self.current_audio_file and os.path.exists(self.current_audio_file):
             try:
                 os.remove(self.current_audio_file)
             except:
                 pass
+
         self.current_audio_file = None
+        self.is_sound_playing = False 
 
     # === Speech Listening ===
     def listen(self, timeout=5, phrase_time_limit=10):             
@@ -132,67 +148,129 @@ class AssistantManager:
                 print(f"❌ Speech error: {e}")
                 return None
 
-    def wake_word_listener(self):
-        recognizer = sr.Recognizer()
-        mic = sr.Microphone()
-        with mic as source:
-            recognizer.adjust_for_ambient_noise(source)
-            while True:
-                if self.conversation_active:
-                    time.sleep(1)
-                    continue
-                try:
-                    print("👂 (Idle) Listening for Wake Word...")
-                    audio = recognizer.listen(source, timeout=3, phrase_time_limit=3)
-                    text = recognizer.recognize_google(audio, language="th-TH").lower()
-                    if any(wake_word in text for wake_word in WAKE_WORDS):
-                        print("✅ Wake Word Detected!")
-                        self.wake_word_detected.set()
-                except (sr.UnknownValueError, sr.WaitTimeoutError):
-                    time.sleep(0.1)
-                except sr.RequestError as e:
-                    print(f"❌ Wake Listener error: {e}")
-                    time.sleep(1)
-
-    # === AI Core ===
-    def needs_history(self, user_input):
+    
+    def summarize_for_memory(self,text):
         prompt = f"""
-พิจารณาข้อความต่อไปนี้: "{user_input}"
-จำเป็นต้องใช้ประวัติการสนทนาเก่าหรือไม่ เพื่อเข้าใจหรือให้ข้อมูลที่ถูกต้อง?
-ตอบกลับเพียงคำเดียวว่า "Yes" หรือ "No" เท่านั้น
-"""
-        response = self.client.chat.completions.create(
-            model=GPT_MODEL,
-            messages=[
-                {"role": "system", "content": "คุณคือผู้ช่วยที่วิเคราะห์ความจำเป็นในการใช้ประวัติการสนทนา"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0
-        )
-        answer = response.choices[0].message.content.strip().lower()
-        return answer == "yes"
-
-    def summarize_text(self,text):
-        if not text:
-            return ""
-        
-        prompt = f"""
-    สรุปเนื้อหานี้ให้อยู่ใน 3-5 บรรทัด สำคัญและเข้าใจง่าย:
+    สรุปข้อความต่อไปนี้ให้อยู่ในรูปแบบที่เข้าใจง่าย กระชับ และเน้นใจความสำคัญ:
 
     {text}
     """
 
         response = self.client.chat.completions.create(
             model=GPT_MODEL,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        summary  = response.choices[0].message.content.strip()
+        return summary
+
+
+    def smart_full_flow(self,user_question, memory_manager):
+        # วิเคราะห์ความต้องการ
+        analysis = self.analyze_question_all_in_one(user_question)
+        need_web = analysis.get("need_web_search", "No") == "Yes"
+        need_memory = analysis.get("need_memory", "No") == "Yes"
+        need_history = analysis.get("need_conversation_history", "No") == "Yes"
+
+        print(f"📊 Analysis: need_web={need_web}, need_memory={need_memory}, need_history={need_history}")
+
+        context_parts = []
+
+        # 1. Web Search
+        if need_web:
+            print("🌐 Searching web...")
+            search_results = self.search_serper(user_question, top_k=5)
+            web_context = self.build_context_from_search_results(search_results)
+            context_parts.append(web_context)
+
+        # 2. Memory (Long Term)
+        if need_memory:
+            print("🧠 Loading memory...")
+            recent_memories = memory_manager.get_recent_memories(limit=5)
+            memory_text = "\n".join([f"{role.capitalize()}: {summary}" for role, summary in reversed(recent_memories)])
+            context_parts.append(memory_text)
+
+        # 3. Conversation History (Short Term)
+        if need_history:
+            print("🗣️ Loading conversation history...")
+            history_text = self.get_conversation_history(memory_manager,limit=5)
+            context_parts.append(history_text)
+
+        # รวม Context
+        full_context = "\n\n".join(context_parts).strip()
+
+        if not full_context:
+            print("🚀 No extra context needed. Asking GPT directly...")
+            full_context = ""
+
+        # ส่งถาม GPT
+        answer = self.ask_gpt_with_context(user_question, context=full_context)
+
+        print("ChatGPT : ",answer)
+
+        # หลังจากตอบ → บันทึกลง Memory ด้วย
+        user_summary = self.summarize_for_memory(user_question)
+        memory_manager.add_message("user", user_question, user_summary)
+
+        assistant_summary = self.summarize_for_memory(answer)
+        memory_manager.add_message("assistant", answer, assistant_summary)
+
+        return answer
+
+    def get_conversation_history(self,memory_manager, limit=5):
+        memories = memory_manager.get_recent_memories(limit=limit)
+
+        if not memories:
+            return ""
+
+        context = ""
+        for role, summary in reversed(memories):  # เรียงจากเก่า → ใหม่
+            context += f"{role.capitalize()}: {summary}\n"
+
+        return context.strip()
+
+    def analyze_question_all_in_one(self,question):
+        prompt = f"""
+    Analyze the following user question carefully:
+
+    "{question}"
+
+    Answer ONLY in JSON format with three fields:
+    - "need_web_search": "Yes" or "No"
+    - "need_memory": "Yes" or "No"
+    - "need_conversation_history": "Yes" or "No"
+
+   Rules:
+    - If the question requires real-time or up-to-date information (such as news, stock prices, weather), set "need_web_search" to "Yes".
+    - If the question depends on personal information (user preferences, previous sessions, user's memory), set "need_memory" to "Yes".
+    - If the question refers to or depends on previous conversation (such as "please clarify", "can you expand", "give more details", "calculate again", "give decimal places", "continue", "summarize", etc.), or if the question is incomplete without previous context, set "need_conversation_history" to "Yes".
+
+    Important:
+    - If the current question alone cannot be fully understood without previous context, assume "need_conversation_history" = "Yes".
+
+    Respond with only the pure JSON. No explanation.
+
+    Example:
+    {{
+        "need_web_search": "No",
+        "need_memory": "Yes",
+        "need_conversation_history": "Yes"
+    }}
+    """
+ 
+        response = self.client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
         )
 
-        return response.choices[0].message.content.strip()
-
-
+        content = response.choices[0].message.content.strip()
+    
+        import json
+        cleaned_content = re.sub(r"```(?:json)?\n([\s\S]*?)\n```", r"\1", content.strip())        
+        result = json.loads(cleaned_content)
+        return result
+  
     def fetch_webpage_content(self,url):
         try:
             response = requests.get(url, timeout=5)
@@ -227,72 +305,105 @@ class AssistantManager:
             snippet = item.get('snippet', '')
             link = item.get('link', '')
 
-            print(f"🌐 Fetching from {link}")
-            webpage_content = self.fetch_webpage_content(link)
+            if not title and not snippet:
+                continue  # ข้ามอันที่ไม่มีเนื้อหาเลย
 
-            if webpage_content:
-                summarized = self.summarize_text(webpage_content)
-            else:
-                summarized = snippet  # ใช้ Snippet แทนถ้าโหลดเนื้อเว็บไม่ได้
-
-            context_parts.append(f"{idx}. {title}\n{summarized}\nLink: {link}\n")
+            # เอา title + snippet มาประกอบกัน
+            context_entry = f"{idx}. {title}\n{snippet}\nLink: {link}"
+            context_parts.append(context_entry)
 
         final_context = "\n\n".join(context_parts)
         return final_context.strip()
 
-
-    def ask_gpt(self, question, context):
+    def ask_gpt_with_context(self,question, context=""):
         system_prompt = (
-            "You are a helpful assistant. You have access to live web results. "
-            "Use the context provided to answer the user's question. "
-            "If the context is not 100 percent complete, you may infer a reasonable answer, but clarify your assumptions. "
-            "If the information is truly missing, be honest and say so."
+            "You are a helpful assistant. "
+            "Answer the user's question based only on the provided context if available. "
+            "If context is missing or incomplete, do your best to infer a reasonable answer, but clearly mention any assumptions. "
+            "If you don't have enough information, politely say so."
         )
 
-        try:
+        # เตรียม Messages ที่จะส่งเข้า GPT
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ]
 
-            prompt = f"""You are an AI assistant. Use the information below to answer the user's question. 
-            Only answer from the context, and if unclear, please try your best'
+        # ถ้ามี Context แนบ (เช่น Memory หรือ Web Search หรือ History)
+        if context:
+            messages.append({"role": "user", "content": f"Context:\n{context}"})
 
-            Context:
-            {context}
+        # แล้วตามด้วยคำถามจริง
+        messages.append({"role": "user", "content": f"Question:\n{question}"})
 
-            Question: {question}
-            """
-            
-            if self.needs_history(question):
-                print("need history=yes")
-                messages = [{"role": "system", "content": system_prompt}] + self.history_manager.get_history(limit=10) + [{"role": "user", "content": prompt}]
-            else:                
-                print("need history=no")
-                messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+        # เรียก OpenAI API
+        response = self.client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=messages,
+            temperature=0.3,
+        )
 
-            response = self.client.chat.completions.create(
-                model=GPT_MODEL,
-                messages=messages,
-                temperature=0.3
-            )
-            reply = response.choices[0].message.content.strip()
+        # ดึงคำตอบ
+        reply = response.choices[0].message.content.strip()
+        return reply
 
-            print("ChatGPT :", reply)
-
-            # Save conversation
-            self.history_manager.add_message("user", question)
-            self.history_manager.add_message("assistant", reply)
-
-            return reply
-        except Exception as e:
-            return f"❌ GPT Error: {e}"
-
+    
     def is_clear_history_command(self, text):
         if not text:
             return False
         keywords = ["เริ่มบทสนทนาใหม่", "ล้างบทสนทนา", "เริ่มใหม่"]
         return any(keyword in text.lower() for keyword in keywords)
 
+# === Real-time Command Listener ===
+    def command_listener(self):
+        recognizer = sr.Recognizer()
+        mic = sr.Microphone()
+
+        with mic as source:
+            recognizer.adjust_for_ambient_noise(source)
+            print("👂 Command Listener started.")
+
+            while True:
+                if self.conversation_active:
+
+                    try:
+                        
+                        audio = recognizer.listen(source, timeout=2, phrase_time_limit=2)
+                        command = recognizer.recognize_google(audio, language="th-TH").lower()
+
+                        print(f"🗣️ Heard: {command}")
+
+                        if any(stop_word in command for stop_word in STOP_WORDS):
+                            print("🛑 Stop command detected!")
+                            self.stop_audio()
+                        # 🔥 Check EXIT WORD
+                        if any(exit_word in command for exit_word in EXIT_WORDS):
+                            print("👋 Exit command detected!")
+                            self.should_exit = True
+                        
+                    except (sr.UnknownValueError, sr.WaitTimeoutError):
+                        continue
+                    except sr.RequestError as e:
+                        print(f"❌ Voice recognition error: {e}")
+                        time.sleep(1)
+                else:
+                    try:
+                        print("👂 (Idle) Listening for Wake Word...")
+                        audio = recognizer.listen(source, timeout=3, phrase_time_limit=3)
+                        text = recognizer.recognize_google(audio, language="th-TH").lower()
+                        if any(wake_word in text for wake_word in WAKE_WORDS):
+                            print("✅ Wake Word Detected!")
+                            self.wake_word_detected.set()
+                    except (sr.UnknownValueError, sr.WaitTimeoutError):
+                        time.sleep(0.1)
+                    except sr.RequestError as e:
+                        print(f"❌ Wake Listener error: {e}")
+                        time.sleep(1)
+
     # === Main Program ===
     def run(self):
-        while True:
+        memory_manager = MemoryManager()
+
+        while not self.should_exit:
             if self.conversation_active and (time.time() - self.last_interaction_time > IDLE_TIMEOUT):
                 print("⌛ Conversation idle timeout. Going back to Wake Word mode.")
                 self.conversation_active = False
@@ -303,39 +414,24 @@ class AssistantManager:
                 self.wake_word_detected.clear()
                 self.conversation_active = True
                 self.speak("ค่ะ มีอะไรให้ช่วยคะ?")
-
-            user_input = self.listen(timeout=15, phrase_time_limit=10)
-            if not user_input:
-                continue
-
-            print(f"🗣️ User said: {user_input}")
-            self.last_interaction_time = time.time()
-
-            if any(exit_word in user_input.lower() for exit_word in EXIT_WORDS):
-                break
-
-            if self.is_clear_history_command(user_input):
-                self.history_manager.clear_history()
-                self.stop_audio()
-                self.speak("เริ่มต้นบทสนทนาใหม่แล้วค่ะ")
-                continue
-
-            if any(stop_word in user_input.lower() for stop_word in STOP_WORDS):
-                print("Received Stop command.. Stopping Audio..")
-                self.stop_audio()
-                continue
+                time.sleep(1)
             
-            if not self.current_sound_channel.get_busy():
-                print("Sending command to Chat GPT ...")
-                results = self.search_serper(user_input)
-                context = self.build_context_from_search_results(results)
+            if not self.is_sound_playing:
+                user_input = self.listen(timeout=15, phrase_time_limit=10)
+                if not user_input:
+                    continue       
 
-               # print("context = ",context)
-                reply = self.ask_gpt(user_input, context)            
-                self.speak(reply)
+                print(f"🗣️ User said: {user_input}")
+                self.last_interaction_time = time.time()                      
+                        
+                # ✅ ส่งคำถามเข้า smart_full_flow พร้อม MemoryManager
+                print("Sending to GPT...")
+                answer = self.smart_full_flow(user_input, memory_manager)     
+                self.speak(answer)
                 self.last_interaction_time = time.time()
-        
-
+       
+        # ✅ Exit cleanly
+        print("👋 Program exiting... Goodbye!")
 
 if __name__ == "__main__":
     assistant = AssistantManager()
