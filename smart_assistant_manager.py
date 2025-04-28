@@ -8,21 +8,22 @@ import pygame
 import time
 import sqlite3
 import requests
+import re
+from bs4 import BeautifulSoup
 from pynput import keyboard
 
 from chat_history_manager import ChatHistoryManager
-#test  
-
+#test
 # --- Settings ---
-SERPER_API_KEY = "7deff68a61a60c8740b5383e52302972444cfd14"
+SERPER_API_KEY = "7dff68a61a60c8740b5383e52302972444cfd14"
 GPT_MODEL = "gpt-4o"
 WAKE_WORDS = ["สวัสดี", "hey ai"]
 STOP_WORDS = ["หยุดพูด", "stop"]
+EXIT_WORDS = ["ออกจากโปรแกรม"]
 IDLE_TIMEOUT = 60  # sec
 
 class AssistantManager:
     def __init__(self):
-        self.client = OpenAI(api_key  = "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")
         self.history_manager = ChatHistoryManager()
         self.conversation_active = False
         self.last_interaction_time = time.time()
@@ -34,6 +35,23 @@ class AssistantManager:
 
         pygame.mixer.init()
         threading.Thread(target=self.wake_word_listener, daemon=True).start()
+
+    def clean_text_for_gtts(self,text):
+        # 1. รักษาจุด (.) ระหว่างตัวเลข เช่น 2.14
+        text = re.sub(r"(?<=\d)\.(?=\d)", "DOTPLACEHOLDER", text)
+        
+        # 2. รักษาจุด (.) ติดกับตัวอักษร เช่น U.S.A.
+        text = re.sub(r"(?<=\w)\.(?=\w)", "DOTPLACEHOLDER", text)
+        
+        # 3. กรองเฉพาะ ก-ฮ, a-z, A-Z, 0-9, เว้นวรรค, เครื่องหมาย %, :
+        text = re.sub(r"[^ก-๙a-zA-Z0-9\s%:-]", "", text)
+        # 4. คืน DOT กลับ
+        text = text.replace("DOTPLACEHOLDER", ".")
+
+        # 5. ลบช่องว่างซ้ำ
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text
 
     def realtime_keyboard_listener(self):
         def on_press(key):
@@ -55,6 +73,8 @@ class AssistantManager:
             self.current_sound_channel = sound.play()
             while self.current_sound_channel.get_busy():
                 pygame.time.wait(100)
+                self.last_interaction_time = time.time()  #when sound is playing, keep interaction time updated
+
         except Exception as e:
             print(f"❌ Error playing sound: {e}")
         finally:
@@ -67,7 +87,10 @@ class AssistantManager:
     def speak(self, text):
         try:
             filename = f"temp_{uuid.uuid4()}.mp3"
-            tts = gTTS(text=text, lang="th")
+            
+            cleaned_text = self.clean_text_for_gtts(text)
+
+            tts = gTTS(text=cleaned_text, lang="th")
             tts.save(filename)
 
             self.stop_audio()
@@ -118,7 +141,6 @@ class AssistantManager:
                 if self.conversation_active:
                     time.sleep(1)
                     continue
-
                 try:
                     print("👂 (Idle) Listening for Wake Word...")
                     audio = recognizer.listen(source, timeout=3, phrase_time_limit=3)
@@ -150,43 +172,109 @@ class AssistantManager:
         answer = response.choices[0].message.content.strip().lower()
         return answer == "yes"
 
-    def search_serper(self, query, mode="web"):
-        endpoint = "search" if mode == "web" else "news"
-        url = f"https://google.serper.dev/{endpoint}"
-        headers = { "X-API-KEY": SERPER_API_KEY }
+    def summarize_text(self,text):
+        if not text:
+            return ""
+        
+        prompt = f"""
+    สรุปเนื้อหานี้ให้อยู่ใน 3-5 บรรทัด สำคัญและเข้าใจง่าย:
+
+    {text}
+    """
+
+        response = self.client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
+        )
+
+        return response.choices[0].message.content.strip()
+
+
+    def fetch_webpage_content(self,url):
+        try:
+            response = requests.get(url, timeout=5)
+            soup = BeautifulSoup(response.text, "html.parser")
+            paragraphs = soup.find_all("p")
+            text = "\n".join(p.get_text() for p in paragraphs)
+            return text.strip()
+        except Exception as e:
+            print(f"❌ Error fetching {url}: {e}")
+            return ""
+
+    def search_serper(self,query, top_k=5):
+        url = "https://google.serper.dev/search"
+        headers = {
+            "X-API-KEY": SERPER_API_KEY
+        }
         payload = { "q": query }
 
         res = requests.post(url, headers=headers, json=payload)
+        res.raise_for_status()
         data = res.json()
-        results = data.get("organic" if mode == "web" else "news", [])[:3]
 
-        if not results:
-            return "No results found."
+        results = data.get("organic", [])[:top_k]
 
-        context = "\n".join([
-            f"- {item['title']} ({item.get('link', '')}): {item.get('snippet', '')}"
-            for item in results
-        ])
-        return context
+        return results
+    
+    def build_context_from_search_results(self,results):
+        context_parts = []
+
+        for idx, item in enumerate(results, 1):
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            link = item.get('link', '')
+
+            print(f"🌐 Fetching from {link}")
+            webpage_content = self.fetch_webpage_content(link)
+
+            if webpage_content:
+                summarized = self.summarize_text(webpage_content)
+            else:
+                summarized = snippet  # ใช้ Snippet แทนถ้าโหลดเนื้อเว็บไม่ได้
+
+            context_parts.append(f"{idx}. {title}\n{summarized}\nLink: {link}\n")
+
+        final_context = "\n\n".join(context_parts)
+        return final_context.strip()
+
 
     def ask_gpt(self, question, context):
         system_prompt = (
             "You are a helpful assistant. You have access to live web results. "
-            "Answer only based on context."
+            "Use the context provided to answer the user's question. "
+            "If the context is not 100 percent complete, you may infer a reasonable answer, but clarify your assumptions. "
+            "If the information is truly missing, be honest and say so."
         )
 
         try:
+
+            prompt = f"""You are an AI assistant. Use the information below to answer the user's question. 
+            Only answer from the context, and if unclear, please try your best'
+
+            Context:
+            {context}
+
+            Question: {question}
+            """
+            
             if self.needs_history(question):
-                messages = [{"role": "system", "content": system_prompt}] + self.history_manager.get_history(limit=10) + [{"role": "user", "content": question}]
-            else:
-                messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
+                print("need history=yes")
+                messages = [{"role": "system", "content": system_prompt}] + self.history_manager.get_history(limit=10) + [{"role": "user", "content": prompt}]
+            else:                
+                print("need history=no")
+                messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
 
             response = self.client.chat.completions.create(
                 model=GPT_MODEL,
                 messages=messages,
-                temperature=0.5
+                temperature=0.3
             )
             reply = response.choices[0].message.content.strip()
+
+            print("ChatGPT :", reply)
 
             # Save conversation
             self.history_manager.add_message("user", question)
@@ -223,6 +311,9 @@ class AssistantManager:
             print(f"🗣️ User said: {user_input}")
             self.last_interaction_time = time.time()
 
+            if any(exit_word in user_input.lower() for exit_word in EXIT_WORDS):
+                break
+
             if self.is_clear_history_command(user_input):
                 self.history_manager.clear_history()
                 self.stop_audio()
@@ -236,7 +327,10 @@ class AssistantManager:
             
             if not self.current_sound_channel.get_busy():
                 print("Sending command to Chat GPT ...")
-                context = self.search_serper(user_input)
+                results = self.search_serper(user_input)
+                context = self.build_context_from_search_results(results)
+
+               # print("context = ",context)
                 reply = self.ask_gpt(user_input, context)            
                 self.speak(reply)
                 self.last_interaction_time = time.time()
