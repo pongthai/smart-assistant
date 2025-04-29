@@ -3,12 +3,9 @@
 import threading
 import time
 import speech_recognition as sr
+from .config import WAKE_WORDS
+from .config import COMMAND_WORDS
 
-WAKE_WORDS = ["สวัสดี", "hey ai"]
-COMMAND_WORDS = {
-    "stop": ["หยุดพูด", "หยุด", "เงียบ"],
-    "exit": ["ออกจากโปรแกรม", "เลิกทำงาน"]
-}
 
 class VoiceListener:
     def __init__(self, assistant_manager):
@@ -36,12 +33,18 @@ class VoiceListener:
                         if any(wake_word in text for wake_word in WAKE_WORDS):
                             print("✅ Wake Word Detected!")
                             self.assistant_manager.wake_word_detected.set()
+                        
+                        if self.detect_command(text, "exit"):
+                            print("👋 Exit command detected")
+                            self.assistant_manager.should_exit = True
+                            break
+
                     else:
                         # 🧠 Conversation mode: Listen for Commands
-                        print("👂 (Conversation) Listening for Commands...")
-                        audio = self.recognizer.listen(source, timeout=2, phrase_time_limit=2)
+                        print("👂 Listening for Commands...")
+                        audio = self.recognizer.listen(source, timeout=3, phrase_time_limit=3)
                         text = self.recognizer.recognize_google(audio, language="th-TH").lower()
-                        print(f"🗣️ Detected (Conversation): {text}")
+                        print(f"🗣️ Detected (command): {text}")
                         
                         # Check command
                         if self.detect_command(text, "stop"):
@@ -68,7 +71,7 @@ class VoiceListener:
             self.recognizer.adjust_for_ambient_noise(source)
             self.recognizer.pause_threshold = 1.5 
             try:
-                print("🎙️ Listening(2)...")
+                print("🎙️ Listening for question...")
                 audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
                 text = self.recognizer.recognize_google(audio, language="th-TH")
                 return text.strip()

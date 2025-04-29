@@ -98,6 +98,7 @@ class AssistantManager:
 
                 # Ask GPT
                 answer = self.chat_manager.ask_gpt_with_context(user_voice, context=full_context)
+                print("ChatGPT: ",answer)
                 self.audio_manager.speak(answer)
                 self.last_interaction_time = time.time()
 

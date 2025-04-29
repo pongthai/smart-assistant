@@ -4,3 +4,4 @@ api-key
 client*.py
 server*.py
 *.pyc
+./assistant/config.py
