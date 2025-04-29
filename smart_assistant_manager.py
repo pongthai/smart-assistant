@@ -16,7 +16,7 @@ from memory_manager import MemoryManager
 
 #test
 # --- Settings ---
-SERPER_API_KEY = "7deff68a61a60c8740b5383e52302972444cfd14"
+SERPER_API_KEY = ""
 GPT_MODEL = "gpt-4o"
 WAKE_WORDS = ["สวัสดี", "hey ai"]
 STOP_WORDS = ["หยุดพูด", "stop"]
@@ -25,6 +25,7 @@ IDLE_TIMEOUT = 60  # sec
 
 class AssistantManager:
     def __init__(self):
+        self.client = OpenAI(api_key  = "")
         self.should_exit = False
         self.conversation_active = False
         self.last_interaction_time = time.time()
@@ -33,6 +34,7 @@ class AssistantManager:
         self.current_sound_thread = None
         self.current_sound_channel = None
         self.is_sound_playing = False
+        self.previous_question = None
 
         pygame.mixer.init()
 
@@ -80,6 +82,7 @@ class AssistantManager:
             def monitor_playback():
                 while self.current_sound_channel.get_busy():
                     pygame.time.wait(100)  # รอทุก 100 ms
+                    self.last_interaction_time = time.time()    
                 # เมื่อเสียงเล่นจบเอง
                 print("🎵 Sound playback finished.")
                 self.is_sound_playing = False
@@ -167,7 +170,7 @@ class AssistantManager:
 
     def smart_full_flow(self,user_question, memory_manager):
         # วิเคราะห์ความต้องการ
-        analysis = self.analyze_question_all_in_one(user_question)
+        analysis = self.analyze_question_all_in_one(user_question,self.previous_question)
         need_web = analysis.get("need_web_search", "No") == "Yes"
         need_memory = analysis.get("need_memory", "No") == "Yes"
         need_history = analysis.get("need_conversation_history", "No") == "Yes"
@@ -229,45 +232,56 @@ class AssistantManager:
 
         return context.strip()
 
-    def analyze_question_all_in_one(self,question):
-        prompt = f"""
-    Analyze the following user question carefully:
+    def analyze_question_all_in_one(self,current_question, previous_question=None):
+        if previous_question:
+            combined_prompt = f"""
+    Analyze the following conversation carefully:
 
-    "{question}"
+    Previous Question:
+    "{previous_question}"
+
+    Current Question:
+    "{current_question}"
 
     Answer ONLY in JSON format with three fields:
     - "need_web_search": "Yes" or "No"
     - "need_memory": "Yes" or "No"
     - "need_conversation_history": "Yes" or "No"
 
-   Rules:
-    - If the question requires real-time or up-to-date information (such as news, stock prices, weather), set "need_web_search" to "Yes".
-    - If the question depends on personal information (user preferences, previous sessions, user's memory), set "need_memory" to "Yes".
-    - If the question refers to or depends on previous conversation (such as "please clarify", "can you expand", "give more details", "calculate again", "give decimal places", "continue", "summarize", etc.), or if the question is incomplete without previous context, set "need_conversation_history" to "Yes".
+    Rules:
+    - If the current question alone cannot be fully understood without the previous context, set "need_conversation_history" = "Yes".
+    - Other rules about web search and memory apply as usual.
 
-    Important:
-    - If the current question alone cannot be fully understood without previous context, assume "need_conversation_history" = "Yes".
-
-    Respond with only the pure JSON. No explanation.
-
-    Example:
-    {{
-        "need_web_search": "No",
-        "need_memory": "Yes",
-        "need_conversation_history": "Yes"
-    }}
+    Respond only with pure JSON. No explanation.
     """
- 
+        else:
+            combined_prompt = f"""
+    Analyze the following user question carefully:
+
+    "{current_question}"
+
+    Answer ONLY in JSON format with three fields:
+    - "need_web_search": "Yes" or "No"
+    - "need_memory": "Yes" or "No"
+    - "need_conversation_history": "Yes" or "No"
+
+    Rules:
+    - If the question refers to previous context or is incomplete without it, set "need_conversation_history" = "Yes".
+
+    Respond only with pure JSON. No explanation.
+    """
+
+        # 🔥 ส่งไปถาม GPT
         response = self.client.chat.completions.create(
             model=GPT_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": combined_prompt}],
             temperature=0
         )
 
         content = response.choices[0].message.content.strip()
-    
+
         import json
-        cleaned_content = re.sub(r"```(?:json)?\n([\s\S]*?)\n```", r"\1", content.strip())        
+        cleaned_content = re.sub(r"```(?:json)?\n([\s\S]*?)\n```", r"\1", content.strip())
         result = json.loads(cleaned_content)
         return result
   
@@ -294,6 +308,7 @@ class AssistantManager:
         data = res.json()
 
         results = data.get("organic", [])[:top_k]
+
 
         return results
     
@@ -342,6 +357,7 @@ class AssistantManager:
             temperature=0.3,
         )
 
+        self.previous_question = question
         # ดึงคำตอบ
         reply = response.choices[0].message.content.strip()
         return reply
@@ -411,10 +427,11 @@ class AssistantManager:
             if not self.conversation_active:
                 print("⌛ Waiting for Wake Word...")
                 self.wake_word_detected.wait()
-                self.wake_word_detected.clear()
-                self.conversation_active = True
+                self.wake_word_detected.clear()                
                 self.speak("ค่ะ มีอะไรให้ช่วยคะ?")
                 time.sleep(1)
+                self.conversation_active = True
+                self.last_interaction_time = time.time()    
             
             if not self.is_sound_playing:
                 user_input = self.listen(timeout=15, phrase_time_limit=10)
