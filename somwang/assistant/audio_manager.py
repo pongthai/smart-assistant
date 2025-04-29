@@ -8,8 +8,9 @@ import uuid
 from gtts import gTTS
 
 class AudioManager:
-    def __init__(self):
+    def __init__(self,assistant_manager):
         pygame.mixer.init()
+        self.assistant_manager = assistant_manager
         self.current_audio_file = None
         self.current_sound_channel = None
         self.is_sound_playing = False
@@ -36,6 +37,7 @@ class AudioManager:
 
             def monitor_playback():
                 while self.current_sound_channel.get_busy():
+                    self.assistant_manager.last_interaction_time = time.time()
                     pygame.time.wait(100)
                 print("🎵 Sound playback finished.")
                 self.is_sound_playing = False

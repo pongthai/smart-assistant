@@ -18,7 +18,7 @@ class AssistantManager:
         self.last_interaction_time = time.time()
         self.previous_question = None
 
-        self.audio_manager = AudioManager()
+        self.audio_manager = AudioManager(self)
         self.memory_manager = MemoryManager()
         self.search_manager = SearchManager()
         self.chat_manager = ChatManager()

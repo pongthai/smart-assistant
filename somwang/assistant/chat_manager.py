@@ -11,10 +11,11 @@ class ChatManager:
 
     def ask_gpt_with_context(self, question, context=""):
         system_prompt = (
-            "You are a helpful assistant. "
-            "Answer the user's question based only on the provided context if available. "
-            "If context is missing or incomplete, do your best to infer a reasonable answer, but clearly mention any assumptions. "
-            "If you don't have enough information, politely say so."
+            "You are a helpful assistant who uses the provided context to answer the user's question."
+            "If the answer is explicitly stated in the context, reply directly."
+            "If the answer is not clearly stated but can be reasonably inferred from the context, "
+            "please infer it and clearly mention your assumption."
+            "If absolutely no information is available, then politely state that the information is not found."
         )
 
         messages = [{"role": "system", "content": system_prompt}]

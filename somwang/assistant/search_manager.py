@@ -1,3 +1,4 @@
+
 # assistant/search_manager.py
 
 import requests
@@ -33,7 +34,6 @@ class SearchManager:
         except Exception as e:
             print(f"❌ Error fetching {url}: {e}")
             return ""
-
     def build_context_from_search_results(self, results):
         context_parts = []
 
@@ -45,7 +45,36 @@ class SearchManager:
             if not title and not snippet:
                 continue
 
-            context_entry = f"{idx}. {title}\n{snippet}\nLink: {link}"
+            # 🔥 ลอง fetch เนื้อหาจากหน้าเว็บจริง
+            page_content = self.fetch_webpage_content(link)
+
+            # 🔥 เอาแค่ย่อหน้าแรกพอ ไม่งั้น context ยาวเกิน
+            if page_content:
+                page_content = page_content.split("\n")[0][:500]  # ตัดที่ 500 ตัวอักษรแรก
+
+            context_entry = f"""
+    {idx}. {title}
+    {snippet}
+    Link: {link}
+    Extracted Content: {page_content if page_content else 'N/A'}
+    """.strip()
+
             context_parts.append(context_entry)
 
         return "\n\n".join(context_parts).strip()
+
+    # def build_context_from_search_results(self, results):
+    #     context_parts = []
+
+    #     for idx, item in enumerate(results, 1):
+    #         title = item.get('title', '')
+    #         snippet = item.get('snippet', '')
+    #         link = item.get('link', '')
+
+    #         if not title and not snippet:
+    #             continue
+
+    #         context_entry = f"{idx}. {title}\n{snippet}\nLink: {link}"
+    #         context_parts.append(context_entry)
+
+    #     return "\n\n".join(context_parts).strip()
