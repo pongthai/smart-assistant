@@ -78,6 +78,7 @@ class AssistantManager:
 
                 if need_web:
                     print("🌐 Searching web...")
+                    self.audio_manager.speak("รอซักครู่นะคะ")
                     search_results = self.search_manager.search_serper(user_voice, top_k=5)
                     web_context = self.search_manager.build_context_from_search_results(search_results)
                     context_parts.append(web_context)

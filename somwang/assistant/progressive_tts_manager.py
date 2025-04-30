@@ -4,6 +4,7 @@ import os
 from gtts import gTTS
 import pygame
 import re
+from pythainlp.tokenize import sent_tokenize
 
 class ProgressiveTTSManager:
     def __init__(self,assistant_manager):
@@ -33,31 +34,41 @@ class ProgressiveTTSManager:
 
         return text
     
-    def smart_split_text(self, text, max_len=50):
-        sentences = re.split(r'(?<=[.!?…])\s+', text)
+
+    def smart_split_text(self, text, max_len=60):        
+        sentences = sent_tokenize(text)
         chunks = []
-        current_chunk = ""
-
         for sentence in sentences:
-            if len(current_chunk) + len(sentence) <= max_len:
-                current_chunk += (" " + sentence)
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            if len(sentence) <= max_len:
+                chunks.append(sentence)                
             else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = sentence
-
-        if current_chunk:
-            chunks.append(current_chunk.strip())
+                # ตัดเพิ่มตามความยาว
+                words = sentence.split()
+                temp = ""
+                for word in words:
+                    if len(temp + " " + word) > max_len:
+                        chunks.append(temp.strip())
+                        temp = word
+                    else:
+                        temp += " " + word
+                if temp.strip():
+                    chunks.append(temp.strip())
+        
 
         return chunks
 
-    def generate_chunks(self):
+    def generate_chunks(self):        
         for idx, chunk in enumerate(self.chunks):
             if self.stop_flag.is_set():
-                break  # 🛑 ถ้ามีสั่งหยุด จะไม่ generate ต่อ
-
+                break  # 🛑 ถ้ามีสั่งหยุด จะไม่ generate ต่อ            
+            if not chunk.strip():
+                continue  # ✅ ข้าม chunk ว่าง
             filename = f"chunk_{idx}.mp3"
             cleaned_text = self.clean_text_for_gtts(chunk)
+            #print("cleaned_text=",cleaned_text)
             tts = gTTS(text=cleaned_text, lang="th")
             tts.save(filename)
             with self.lock:

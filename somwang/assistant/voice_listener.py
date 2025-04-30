@@ -15,13 +15,22 @@ class VoiceListener:
         # 🔥 แยก 2 ไมค์
         self.background_mic = sr.Microphone()
         self.listen_mic = sr.Microphone()
+        self.calibrate_energy_threshold()
 
         # Start background listener thread
         threading.Thread(target=self.background_listener, daemon=True).start()
+    
+    def calibrate_energy_threshold(self):
+        print("🔧 Calibrating ambient noise... Please stay quiet (3 sec)")
+        with self.listen_mic as source:
+            self.recognizer.dynamic_energy_threshold = False  # ✅ use fixed threshold
+            self.recognizer.adjust_for_ambient_noise(source, duration=3)
+
+        print(f"✅ Energy threshold set to: {self.recognizer.energy_threshold}")
 
     def background_listener(self):
         with self.background_mic as source:
-            self.recognizer.adjust_for_ambient_noise(source)
+            #self.recognizer.adjust_for_ambient_noise(source)
             while True:
                 try:
                     if not self.assistant_manager.conversation_active:
@@ -41,10 +50,10 @@ class VoiceListener:
 
                     else:
                         # 🧠 Conversation mode: Listen for Commands
-                        print("👂 Listening for Commands...")
+                        #print("👂 Listening for Commands...")
                         audio = self.recognizer.listen(source, timeout=3, phrase_time_limit=3)
                         text = self.recognizer.recognize_google(audio, language="th-TH").lower()
-                        print(f"🗣️ Detected (command): {text}")
+                        #print(f"🗣️ Detected (command): {text}")
                         
                         # Check command
                         if self.detect_command(text, "stop"):
@@ -66,10 +75,11 @@ class VoiceListener:
         keywords = COMMAND_WORDS.get(command_type, [])
         return any(keyword in text for keyword in keywords)
 
-    def listen(self, timeout=15, phrase_time_limit=10):
+    def listen(self, timeout=5, phrase_time_limit=15):
         with self.listen_mic as source:
-            self.recognizer.adjust_for_ambient_noise(source)
-            self.recognizer.pause_threshold = 1.5 
+            #self.recognizer.adjust_for_ambient_noise(source, duration=0.7)
+            self.recognizer.pause_threshold = 1.5
+
             try:
                 print("🎙️ Listening for question...")
                 audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
