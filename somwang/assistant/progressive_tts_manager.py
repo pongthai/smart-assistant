@@ -16,7 +16,7 @@ class ProgressiveTTSManager:
         self.lock = threading.Lock()
         self.generating_done = False
         self.stop_flag = threading.Event()
-    
+        
     def clean_text_for_gtts(self,text):
         # 1. รักษาจุด (.) ระหว่างตัวเลข เช่น 2.14
         text = re.sub(r"(?<=\d)\.(?=\d)", "DOTPLACEHOLDER", text)
@@ -35,7 +35,10 @@ class ProgressiveTTSManager:
         return text
     
 
-    def smart_split_text(self, text, max_len=60):        
+    def smart_split_text(self, text, max_len=60):
+
+        text = text.replace("\n", ". \n")  # add a sentence-like marker
+
         sentences = sent_tokenize(text)
         chunks = []
         for sentence in sentences:
@@ -43,40 +46,55 @@ class ProgressiveTTSManager:
             if not sentence:
                 continue
             if len(sentence) <= max_len:
-                chunks.append(sentence)                
+                chunks.append(sentence) 
             else:
                 # ตัดเพิ่มตามความยาว
                 words = sentence.split()
                 temp = ""
                 for word in words:
                     if len(temp + " " + word) > max_len:
-                        chunks.append(temp.strip())
+                        if temp.strip():
+                            chunks.append(temp.strip())
                         temp = word
                     else:
                         temp += " " + word
                 if temp.strip():
                     chunks.append(temp.strip())
-        
+
 
         return chunks
 
-    def generate_chunks(self):        
-        for idx, chunk in enumerate(self.chunks):
-            if self.stop_flag.is_set():
-                break  # 🛑 ถ้ามีสั่งหยุด จะไม่ generate ต่อ            
-            if not chunk.strip():
-                continue  # ✅ ข้าม chunk ว่าง
-            filename = f"chunk_{idx}.mp3"
-            cleaned_text = self.clean_text_for_gtts(chunk)
-            #print("cleaned_text=",cleaned_text)
-            tts = gTTS(text=cleaned_text, lang="th")
-            tts.save(filename)
-            with self.lock:
-                self.chunk_files.append(filename)
-        self.generating_done = True
+    def generate_chunks(self):     
+        try: 
+            for idx, chunk in enumerate(self.chunks):
+                if self.stop_flag.is_set():
+                    break  # 🛑 ถ้ามีสั่งหยุด จะไม่ generate ต่อ            
+                if not chunk.strip():
+                    continue  # ✅ ข้าม chunk ว่าง
+                filename = f"chunk_{idx}.mp3"
+                cleaned_text = ( self.clean_text_for_gtts(chunk) or "").strip()
+                
+                if not cleaned_text:
+                    print("❌ Input text is empty. Cannot generate TTS. input = ",chunk)    
+                    continue                        
+                #print("cleaned_text=",cleaned_text)
+                tts = gTTS(text=cleaned_text, lang="th")
+                tts.save(filename)
+                with self.lock:
+                    self.chunk_files.append(filename)
+            self.generating_done = True
+
+        except AssertionError as e:
+            print(f"❗ gTTS error: {e}")
+        except ValueError as e:
+            print(f"❗ TTS skipped: {e}")
+        except Exception as e:
+            print(f"❌ Unexpected error during TTS: {e}")
+        
 
     def play_chunks(self):
         idx = 0
+        print("🔊 Playing sound")
         while True:
             if self.stop_flag.is_set():
                 print("🛑 Stop signal received during playback.")
@@ -92,7 +110,7 @@ class ProgressiveTTSManager:
                     time.sleep(0.1)
                     continue
 
-            print(f"🔊 Playing {filename}")
+            #print(f"🔊 Playing {filename}")
             sound = pygame.mixer.Sound(filename)
             channel = sound.play()
 
