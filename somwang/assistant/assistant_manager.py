@@ -9,6 +9,7 @@ from .memory_manager import MemoryManager
 from .search_manager import SearchManager
 from .chat_manager import ChatManager
 
+
 class AssistantManager:
     def __init__(self):
         # 🔥 เตรียม Event เพื่อ Sync Wake Word
@@ -23,6 +24,7 @@ class AssistantManager:
         self.search_manager = SearchManager()
         self.chat_manager = ChatManager()
         self.voice_listener = VoiceListener(self)
+        
 
         # Start command listener
        # threading.Thread(target=self.voice_listener.command_listener, daemon=True).start()

@@ -5,20 +5,47 @@ import threading
 import time
 import os
 import uuid
+import re
 from gtts import gTTS
+from .progressive_tts_manager import ProgressiveTTSManager
 
 class AudioManager:
     def __init__(self,assistant_manager):
         pygame.mixer.init()
         self.assistant_manager = assistant_manager
+        self.tts_manager = ProgressiveTTSManager(assistant_manager)
+
         self.current_audio_file = None
         self.current_sound_channel = None
         self.is_sound_playing = False
 
-    def speak(self, text):
+    def clean_text_for_gtts(self,text):
+        # 1. รักษาจุด (.) ระหว่างตัวเลข เช่น 2.14
+        text = re.sub(r"(?<=\d)\.(?=\d)", "DOTPLACEHOLDER", text)
+        
+        # 2. รักษาจุด (.) ติดกับตัวอักษร เช่น U.S.A.
+        text = re.sub(r"(?<=\w)\.(?=\w)", "DOTPLACEHOLDER", text)
+        
+        # 3. กรองเฉพาะ ก-ฮ, a-z, A-Z, 0-9, เว้นวรรค, เครื่องหมาย %, :
+        text = re.sub(r"[^ก-๙a-zA-Z0-9\s%:-]", "", text)
+        # 4. คืน DOT กลับ
+        text = text.replace("DOTPLACEHOLDER", ".")
+
+        # 5. ลบช่องว่างซ้ำ
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text
+    
+    def speak(self,text):
+        self.stop_audio()
+        self.tts_manager.speak(text)
+        
+    def speak_org(self, text):
         try:
             filename = f"temp_{uuid.uuid4()}.mp3"
-            tts = gTTS(text=text, lang="th")
+            cleaned_text = self.clean_text_for_gtts(text)
+            print("cleaned text =",cleaned_text)
+            tts = gTTS(text=cleaned_text, lang="th")
             tts.save(filename)
 
             self.stop_audio()
@@ -53,8 +80,11 @@ class AudioManager:
                     os.remove(filename)
                 except:
                     pass
-
     def stop_audio(self):
+        self.tts_manager.stop()
+        self.is_sound_playing = False
+
+    def stop_audio_org(self):
         if self.current_sound_channel and self.current_sound_channel.get_busy():
             print("🛑 Stopping audio...")
             self.current_sound_channel.stop()
