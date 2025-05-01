@@ -52,10 +52,15 @@ class SearchManager:
             if page_content:
                 page_content = page_content.split("\n")[0][:500]  # ตัดที่ 500 ตัวอักษรแรก
 
+    #        context_entry = f"""
+    #{idx}. {title}
+    #{snippet}
+    #Link: {link}
+    #Extracted Content: {page_content if page_content else 'N/A'}
+    #""".strip()
             context_entry = f"""
-    {idx}. {title}
-    {snippet}
-    Link: {link}
+    {idx}. {title}:
+    {snippet}    
     Extracted Content: {page_content if page_content else 'N/A'}
     """.strip()
 

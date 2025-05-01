@@ -8,9 +8,13 @@ import uuid
 import re
 from gtts import gTTS
 from .progressive_tts_manager import ProgressiveTTSManager
+from .logger_config import get_logger
+
+logger = get_logger(__name__)
 
 class AudioManager:
     def __init__(self,assistant_manager):
+        logger.info("AudioManager initialized")
         pygame.mixer.init()
         self.assistant_manager = assistant_manager
         self.tts_manager = ProgressiveTTSManager(assistant_manager)
@@ -39,7 +43,7 @@ class AudioManager:
     def speak(self,text):
         self.stop_audio()
         self.tts_manager.speak(text)
-        
+   
     def speak_org(self, text):
         try:
             filename = f"temp_{uuid.uuid4()}.mp3"

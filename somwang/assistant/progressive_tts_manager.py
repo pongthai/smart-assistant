@@ -5,9 +5,15 @@ from gtts import gTTS
 import pygame
 import re
 from pythainlp.tokenize import sent_tokenize
+import uuid
+import platform
+from .logger_config import get_logger
+
+logger = get_logger(__name__)
 
 class ProgressiveTTSManager:
     def __init__(self,assistant_manager):
+        logger.info("ProgressiveTTSManager initialized")
         pygame.mixer.init()
 
         self.assistant_manager = assistant_manager
@@ -66,16 +72,21 @@ class ProgressiveTTSManager:
 
     def generate_chunks(self):     
         try: 
+            logger.info("Enter generate_chunks")
             for idx, chunk in enumerate(self.chunks):
                 if self.stop_flag.is_set():
                     break  # 🛑 ถ้ามีสั่งหยุด จะไม่ generate ต่อ            
                 if not chunk.strip():
                     continue  # ✅ ข้าม chunk ว่าง
-                filename = f"chunk_{idx}.mp3"
+                is_macos = platform.system() == "Darwin"
+                temp_dir = "/tmp" if is_macos else "/dev/shm"
+
+                filename = f"{temp_dir}/temp_{uuid.uuid4()}.mp3"
+                
                 cleaned_text = ( self.clean_text_for_gtts(chunk) or "").strip()
                 
                 if not cleaned_text:
-                    print("❌ Input text is empty. Cannot generate TTS. input = ",chunk)    
+                    logger.error("❌ Input text is empty. Cannot generate TTS. input = %s",chunk)    
                     continue                        
                 #print("cleaned_text=",cleaned_text)
                 tts = gTTS(text=cleaned_text, lang="th")
@@ -83,21 +94,22 @@ class ProgressiveTTSManager:
                 with self.lock:
                     self.chunk_files.append(filename)
             self.generating_done = True
+            logger.info("Exit generate_chunks")
 
         except AssertionError as e:
-            print(f"❗ gTTS error: {e}")
+            logger.error(f"❗ gTTS error: {e}")
         except ValueError as e:
-            print(f"❗ TTS skipped: {e}")
+            logger.error(f"❗ TTS skipped: {e}")
         except Exception as e:
-            print(f"❌ Unexpected error during TTS: {e}")
+            logger.error(f"❌ Unexpected error during TTS: {e}")
         
 
     def play_chunks(self):
         idx = 0
-        print("🔊 Playing sound")
+        logger.info("🔊 Playing sound")
         while True:
             if self.stop_flag.is_set():
-                print("🛑 Stop signal received during playback.")
+                logger.info("🛑 Stop signal received during playback.")
                 break  # 🛑 หยุดเล่นทันที
 
             with self.lock:
@@ -117,25 +129,26 @@ class ProgressiveTTSManager:
             while channel.get_busy():
                 if self.stop_flag.is_set():
                     channel.stop()
-                    print("🛑 Stopped current sound.")
+                    logger.info("🛑 Stopped current sound.")
                     break
                 self.assistant_manager.last_interaction_time = time.time()
                 time.sleep(0.1)
 
      
     def speak(self, text):
+        logger.info("Enter speak")
         self.stop_flag.clear()
         self.chunks = self.smart_split_text(text, max_len=50)
         self.chunk_files = []
         self.generating_done = False
 
-        threading.Thread(target=self.generate_chunks, daemon=True).start()
+        threading.Thread(target=self.generate_chunks, daemon=True).start()        
         self.play_chunks()
         self.cleanup()
 
     def stop(self):
         """ 🛑 สั่งหยุดการเล่น/สร้างเสียง """
-        print("🛑 Stop requested.")
+        logger.info("🛑 Stop requested.")
         self.stop_flag.set()
 
     def cleanup(self):
@@ -146,4 +159,4 @@ class ProgressiveTTSManager:
             except:
                 pass
         self.chunk_files.clear()
-        print("🧹 Cleaned up temp audio files.")
+        logger.info("🧹 Cleaned up temp audio files.")
