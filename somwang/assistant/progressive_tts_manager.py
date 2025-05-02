@@ -72,7 +72,7 @@ class ProgressiveTTSManager:
 
     def generate_chunks(self):     
         try: 
-            logger.info("Enter generate_chunks")
+            logger.debug("Enter generate_chunks")
             for idx, chunk in enumerate(self.chunks):
                 if self.stop_flag.is_set():
                     break  # 🛑 ถ้ามีสั่งหยุด จะไม่ generate ต่อ            
@@ -91,6 +91,9 @@ class ProgressiveTTSManager:
                 #print("cleaned_text=",cleaned_text)
                 tts = gTTS(text=cleaned_text, lang="th")
                 tts.save(filename)
+
+                logger.debug(f"file={filename} has been saved..")
+
                 with self.lock:
                     self.chunk_files.append(filename)
             self.generating_done = True
@@ -124,6 +127,7 @@ class ProgressiveTTSManager:
 
             #print(f"🔊 Playing {filename}")
             sound = pygame.mixer.Sound(filename)
+            logger.debug(f"++++file={filename} is playing..")
             channel = sound.play()
 
             while channel.get_busy():

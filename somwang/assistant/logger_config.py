@@ -2,13 +2,16 @@
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+from assistant import config  # or just `import config` if it's top-level
 
 def get_logger(name=__name__, log_to_file=True):
     logger = logging.getLogger(name)
     if logger.hasHandlers():
         return logger
 
-    logger.setLevel(logging.INFO)
+    # Convert string level (e.g., "DEBUG") to actual logging constant
+    level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
+    logger.setLevel(level)
 
     # === Console handler ===
     console_handler = logging.StreamHandler()
