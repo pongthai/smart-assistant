@@ -10,26 +10,27 @@ import os
 
 # Mapping between user command and Tuya device function code
 device_map = {
-    "dining_room": {
+    "โต๊ะอาหาร": {
         "device_id": "ebf8854d356650d8d0gcyb",
         "switch_code": "switch_1"
     },
-    "bedroom": {
-        "device_id": "your_device_id_bedroom",
+    "ห้องนั่งเล่น 1": {
+        "device_id": "eb9026d5f9d0aea048hvse",
         "switch_code": "switch_1"
     },
-    "พัดลม": {
-        "device_id": "your_fan_device_id",
-        "switch_code": "switch"
-    },
-    "ห้องน้ำ": {
-        "device_id": "your_bathroom_device_id",
-        "switch_code": "switch_1"
+    "ห้องนั่งเล่น 2": {
+        "device_id": "eb9026d5f9d0aea048hvse",
+        "switch_code": "switch_2"
     },
     "หน้าบ้าน": {
-        "device_id": "your_front_device_id",
+        "device_id": "eb9026d5f9d0aea048hvse",
+        "switch_code": "switch_3"
+    },
+    "น้ำพุ": {
+        "device_id": "eb42282d53730625bffo8k",
         "switch_code": "switch_1"
     }
+
 }
 
 class TuyaController:
@@ -63,13 +64,15 @@ import re
 
 location_keywords = {
     "โต๊ะอาหาร": ["โต๊ะอาหาร", "ห้องกินข้าว", "โซนทานข้าว"],
-    "ห้องนอน": ["ห้องนอน", "เบดรูม", "ที่นอน"],
-    "พัดลม": ["พัดลม", "fan"],
-    "ห้องน้ำ": ["ห้องน้ำ", "ห้องอาบน้ำ"],
-    "หน้าบ้าน": ["หน้าบ้าน", "ทางเข้า"]
+    "ห้องนั่งเล่น 1": ["ห้องนั่งเล่น", "โซนโซฟา", "โซนทีวี"],
+    "ห้องนั่งเล่น 2": ["บนโต๊ะกาแฟ"],     
+    "หน้าบ้าน": ["หน้าบ้าน"],
+    "น้ำพุ": ["น้ำพุ"],
+    "ตู้ทำน้ำแข็ง": ["ตู้ทำน้ำแข็ง"],
 }
 
-def parse_command_thai(text):
+def parse_command_thai2(text):
+    print("Enter parse command that...")
     text = text.lower().strip()
 
     action = None

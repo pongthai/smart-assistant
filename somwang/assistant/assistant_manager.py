@@ -8,6 +8,7 @@ from .voice_listener import VoiceListener
 from .memory_manager import MemoryManager
 from .search_manager import SearchManager
 from .chat_manager import ChatManager
+from .voice_command_handler import VoiceCommandHandler
 
 from .logger_config import get_logger
 
@@ -28,7 +29,7 @@ class AssistantManager:
         self.search_manager = SearchManager()
         self.chat_manager = ChatManager(SYSTEM_TONE)
         self.voice_listener = VoiceListener(self)
-        
+        self.voice_command_handler = VoiceCommandHandler()        
 
         # Start command listener
        # threading.Thread(target=self.voice_listener.command_listener, daemon=True).start()
@@ -66,6 +67,12 @@ class AssistantManager:
                 logger.info(f"🗣️ User said: {user_voice}")
                 self.last_interaction_time = time.time()
 
+                response = self.voice_command_handler.parse_command_action(user_voice)
+                
+                #if the user_voice is command then skip - not send to chatGPT
+                if not response:
+                    continue
+                
                 # Analyze need (Web search / Memory / History)
                 analysis = self.chat_manager.analyze_question_all_in_one(
                     current_question=user_voice,
